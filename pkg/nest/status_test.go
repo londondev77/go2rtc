@@ -38,3 +38,20 @@ func TestRetryable(t *testing.T) {
 	require.True(t, retryable(newStatusError(fakeResponse(503, ""))))
 	require.True(t, retryable(errors.New("dial tcp: i/o timeout")))
 }
+
+// Google intermittently answers a GenerateWebRtcStream with 400
+// INVALID_ARGUMENT "offerSdp contains an invalid value." for a camera that is
+// streaming fine; the next dial, with a fresh offer, succeeds. That verdict is
+// on the offer, not the device, so it must not start the off-camera hold-off.
+func TestRejectedOfferIsRetryable(t *testing.T) {
+	rejected := newStatusError(fakeResponse(400, `{"error":{"code":400,"message":"offerSdp contains an invalid value.","status":"INVALID_ARGUMENT"}}`))
+	off := newStatusError(fakeResponse(400, `{"error":{"code":400,"message":"The camera is not available for streaming.","status":"FAILED_PRECONDITION"}}`))
+
+	require.True(t, rejectedOffer(rejected))
+	require.True(t, retryable(rejected))
+
+	require.False(t, rejectedOffer(off))
+	require.False(t, retryable(off))
+	require.False(t, rejectedOffer(newStatusError(fakeResponse(500, `{"status":"INVALID_ARGUMENT"}`))))
+	require.False(t, rejectedOffer(errors.New("INVALID_ARGUMENT")))
+}

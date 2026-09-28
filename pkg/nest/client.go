@@ -174,6 +174,10 @@ func isDeviceAnswer(err error) bool {
 
 func recentDefinitiveError(deviceID string) error { return definitive.recent(deviceID) }
 
+// rejectedOfferRetryDelay is the pause before re-offering after Google
+// rejects an offer's SDP.
+const rejectedOfferRetryDelay = time.Second
+
 func rtcConn(nestAPI *API, rawURL, projectID, deviceID string) (*WebRTCClient, error) {
 	maxRetries := 3
 	retryDelay := time.Second * 30
@@ -219,7 +223,8 @@ func rtcConn(nestAPI *API, rawURL, projectID, deviceID string) (*WebRTCClient, e
 		if err != nil {
 			lastErr = err
 			// a switched-off camera (400 FAILED_PRECONDITION) or an unknown
-			// device (404) will not change within the 90s retry window
+			// device (404) will not change within the 90s retry window; a
+			// rejected offer (400 INVALID_ARGUMENT) is retried below
 			if !retryable(err) {
 				if isDeviceAnswer(err) {
 					ttl := definitive.remember(deviceID, err)
@@ -228,6 +233,13 @@ func rtcConn(nestAPI *API, rawURL, projectID, deviceID string) (*WebRTCClient, e
 				return nil, err
 			}
 			if attempt < maxRetries-1 {
+				if rejectedOffer(err) {
+					// a fresh offer is usually accepted; waiting out the
+					// server-error delay would outlast most consumers' timeouts
+					log.Printf("nest: %s: rejected offer:\n%s", err, offer)
+					time.Sleep(rejectedOfferRetryDelay)
+					continue
+				}
 				time.Sleep(retryDelay)
 				retryDelay *= 2
 				continue

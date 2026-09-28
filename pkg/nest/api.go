@@ -76,13 +76,25 @@ func newStatusError(res *http.Response) error {
 	return &StatusError{Code: res.StatusCode, Msg: msg}
 }
 
+// rejectedOffer reports whether Google turned down the WebRTC offer itself
+// (400 INVALID_ARGUMENT, "offerSdp contains an invalid value."). It does so
+// intermittently for cameras that are streaming fine, and a fresh offer is
+// accepted, so the answer is about that one request, not the device.
+func rejectedOffer(err error) bool {
+	var se *StatusError
+	return errors.As(err, &se) && se.Code == 400 && strings.Contains(se.Msg, "INVALID_ARGUMENT")
+}
+
 // retryable reports whether a failed request may succeed if repeated soon.
-// Any 4xx that survived ExchangeSDP's own 401/409/429 handling is a
+// Any other 4xx that survived ExchangeSDP's own 401/409/429 handling is a
 // definitive answer about the device and only wastes the retry window.
 func retryable(err error) bool {
 	var te *ThrottledError
 	if errors.As(err, &te) {
 		return false
+	}
+	if rejectedOffer(err) {
+		return true
 	}
 	var se *StatusError
 	if errors.As(err, &se) {
